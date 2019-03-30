@@ -35,6 +35,12 @@ class Tokenizer:
 
         return sentences
 
+    def tag(self, sentence):
+        self.model.tag(sentence, self.model.DEFAULT)
+
+    def parse(self, sentence):
+        self.model.parse(sentence, self.model.DEFAULT)
+
     def write(self, sentences, out_format):
         """Write given ufal.udpipe.Sentence-s in the required format (conllu|horizontal|vertical)."""
 
