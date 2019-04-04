@@ -42,7 +42,7 @@ class Tokenizer:
         self.model.parse(sentence, self.model.DEFAULT)
 
     def write(self, sentences, out_format):
-        """Write given ufal.udpipe.Sentence-s in the required format (conllu|horizontal|vertical)."""
+        """Write given ufal.udpipe.Sentence-s in the required format (conllu|horizontal|vertical|plaintext)."""
 
         output_format = ufal.udpipe.OutputFormat.newOutputFormat(out_format)
         output = ''
@@ -63,3 +63,9 @@ def sentences_to_lists(sentences):
 
 def sentences_to_list(sentences):
     return sum(sentences_to_lists(sentences), [])
+
+def substitute_forms(text, words):
+    wi = iter(words)
+    for s in text:
+        for i in range(1, len(s.words)):
+            s.words[i].form = next(wi)

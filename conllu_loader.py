@@ -5,6 +5,7 @@ import torch
 from random import shuffle
 from collections import defaultdict
 import conllu
+import marisa_trie
 
 word_to_ix = dict()
 tag_to_ix = dict()
@@ -26,9 +27,10 @@ def save_dicts(path):
     )
     torch.save(d, path)
 
-def load_dicts(path):
+def load_dicts(d):
     global word_to_ix, tag_to_ix, extra_to_ix, word_freqs
-    d = torch.load(path)
+    if type(d) == str:
+        d = torch.load(d)
     word_to_ix = d['word_to_ix']
     tag_to_ix = d['tag_to_ix']
     extra_to_ix = d['extra_to_ix']
@@ -53,7 +55,7 @@ def register_words(line):
     for w in line:
         word_freqs[w] += 1
 
-def process_word(w, suffix_len=3, prefix_len=0, threshold=20):
+def process_word(w, suffix_trie=None, suffix_len=3, prefix_len=0, threshold=20):
     if not w.isalpha() or word_freqs[w] >= threshold:
         return w
 
@@ -68,7 +70,17 @@ def process_word(w, suffix_len=3, prefix_len=0, threshold=20):
         case = 'c'
     else:
         case = 'l'
-    return case + '|' + pref + w[-suffix_len:]
+
+    if suffix_trie is None:
+        suf = w[-suffix_len:]
+    else:
+        candidates = suffix_trie.prefixes(w[::-1])
+        if len(candidates) == 0:
+            # suf = w[-suffix_len:]
+            suf = '?'
+        else:
+            suf = candidates[-1]
+    return case + '|' + pref + suf
 
 def process_line(line, **kw_args):
     return [process_word(w, **kw_args) for w in line]
@@ -87,7 +99,7 @@ def parse_metadata(s):
     return [int(x) for x in s.split(',')]
 
 def text_property(text, prop):
-    return [w[prop] for w in text]
+    return [w[prop] if w[prop] is not None else "" for w in text]
 
 def process_feats(feats):
     if feats is None:
@@ -95,7 +107,7 @@ def process_feats(feats):
     return "|".join(k + "=" + v for k, v in feats.items())
 
 class ConlluLoader:
-    def __init__(self, data, index=None, device=None, print_broken_tags=[], update_freqs=True):
+    def __init__(self, data, index=None, suffixes=None, device=None, print_broken_tags=[], update_freqs=True):
         global word_to_ix, tag_to_ix
         
         if device is not None:
@@ -104,15 +116,15 @@ class ConlluLoader:
             device = self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         self.broken_tags = 0
-
+        self.ignore_tags = False
         # load the TSV file
         with open(index) as file:
             lines = []
             for line in file:
                 line = line.strip().split('\t')
                 line[0] = int(line[0])
-                line[1] = int(line[1])
                 if len(line) < 5:
+                    self.ignore_tags = True
                     line.append('-')
                 lines.append(line)
             self.phrase_data = pd.DataFrame(lines, columns=['phrase_id', 'document_id', 'phrase', 'lemma', 'tag'])
@@ -131,10 +143,11 @@ class ConlluLoader:
                 phrase_e = parse_metadata(sample.metadata['phrase_e'])
                 for p_id, ps, pe in zip(phrase_id, phrase_s, phrase_e):
                     try:
-                        tag = self.phrase_data.loc[p_id]['tag']
+                        if not self.ignore_tags:
+                            tag = self.phrase_data.loc[p_id]['tag']
+                            tag = process_tag(tag)
+                            validate_tag(tag, ps, pe)
                         doc_id = self.phrase_data.loc[p_id]['document_id']
-                        tag = process_tag(tag)
-                        validate_tag(tag, ps, pe)
                     except KeyError:
                         pass
                     except TagError as e:
@@ -145,15 +158,26 @@ class ConlluLoader:
                             print(self.phrase_data.loc[p_id]['phrase'], file=sys.stderr)
                             print(tag, file=sys.stderr)
                     else:
-                        for t in tag:
-                            if t not in tag_to_ix:
-                                tag_to_ix[t] = len(tag_to_ix)
+                        if self.ignore_tags:
+                            tag = None
+                        else:
+                            for t in tag:
+                                if t not in tag_to_ix:
+                                    tag_to_ix[t] = len(tag_to_ix)
                         self.text_data.append((sample, p_id, tag, (ps, pe)))
+        
+        # load suffixes
+        self.suffixes = None
+        if suffixes is not None:
+            with open(suffixes) as file:
+                self.suffixes = marisa_trie.Trie(line.strip()[::-1] for line in file)
 
     def prepare_data(self, extra_data=['deprel', 'upostag'], include_feats=True, include_head=True, **kw_args):
         self.data = []
         for sample, _, tag, bounds in self.text_data:
             text = text_property(sample, 'form')
+            if self.suffixes is not None:
+                kw_args['suffix_trie'] = self.suffixes
             text = process_line(text, **kw_args)
             extras = [text_property(sample, e) for e in extra_data]
             if include_feats:
@@ -170,7 +194,7 @@ class ConlluLoader:
                 if r not in extra_to_ix:
                     extra_to_ix[r] = len(extra_to_ix)
             p_text = prepare_sequence(text, word_to_ix, self.device)
-            p_tag = prepare_sequence(tag, tag_to_ix, self.device)
+            p_tag = prepare_sequence(tag, tag_to_ix, self.device) if not self.ignore_tags else None
             p_extras = prepare_sequence(extras, extra_to_ix, self.device)
             self.data.append((p_text, p_tag, p_extras, bounds))
 
