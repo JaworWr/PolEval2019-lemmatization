@@ -24,17 +24,18 @@ def apply_tags(oc, words, ops):
 
 def run_tests(loader, model, tok, wiki_phrases=dict()):
     results = []
+
+    model.eval()
     with torch.no_grad():
         for p, data, extras, bounds, text in loader.iter_phrases():
             phrase, lemma, old_tag = p[['phrase', 'lemma', 'tag']]
             if phrase in wiki_phrases:
                 result = wiki_phrases[phrase]
                 tag = None
-                wiki += 1
             else:
-                no_wiki += 1
                 tag = model(data, extras, bounds)
                 tag = [cl.ix_to_tag[i] for i in tag.flatten()]
+                lemmas = cl.text_property(text, 'lemma')[bounds[0]:bounds[1]]
                 pos = cl.text_property(text, 'upostag')[bounds[0]:bounds[1]]
 
                 ps = tok.tokenize(phrase)
@@ -53,27 +54,29 @@ def run_tests(loader, model, tok, wiki_phrases=dict()):
                         else:
                             oc.append('?')
                 result = apply_tags(oc, tokens, tag)
-                substitute_forms(ps, result)
+                try:
+                    substitute_forms(ps, result)
+                except StopIteration:
+                    pass
                 result = tok.write(ps, 'plaintext')
             
             results.append((phrase, lemma, result, old_tag, tag, p))
     return results
 
 def main(args):
-    model = torch.load(args['model'])
-    tok = Tokenizer(args['tokenizer_model'])
-
-    cl.load_dicts(model['dicts'])
-    data_loader = cl.ConlluLoader(args['data'], args['index'], model.get('suffixes', None))
-    data_loader.prepare_data(**model['preparation_params'])
-    print(len(data_loader.data))
-    
     if torch.cuda.is_available():
         device = 'cuda'
         print("Using device '{}'.".format(torch.cuda.get_device_name(None)), file=sys.stderr)
     else:
         device = 'cpu'
         print("CUDA is not available. Using CPU.", file=sys.stderr)
+
+    model = torch.load(args['model'], map_location=device)
+    tok = Tokenizer(args['tokenizer_model'])
+
+    cl.load_dicts(model['dicts'])
+    data_loader = cl.ConlluLoader(args['data'], args['index'], model.get('suffixes', None), device=device, update_freqs=False)
+    data_loader.prepare_data(**model['preparation_params'])
 
     wiki_phrases = dict()
     with open('data/wiki_lemmatization.txt') as file:
@@ -84,7 +87,7 @@ def main(args):
     net = BiLSTM_CRF_extra(256, 200, 1024, len(cl.word_to_ix), len(cl.extra_to_ix), len(cl.tag_to_ix), device=device)
     net.load_state_dict(model['net'])
     net.eval()
-    results = run_tests(data_loader, net, tok)
+    results = run_tests(data_loader, net, tok, wiki_phrases)
 
     with open(args['output'], 'w') as file:
         for phrase, _, result, _, _, p in results:
