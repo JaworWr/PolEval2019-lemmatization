@@ -7,9 +7,10 @@ from collections import defaultdict
 import conllu
 import marisa_trie
 
-word_to_ix = dict()
+UNKNOWN_TAG = '<UNKNOWN>'
+word_to_ix = {UNKNOWN_TAG: 0}
 tag_to_ix = dict()
-extra_to_ix = dict()
+extra_to_ix = {UNKNOWN_TAG: 0}
 ix_to_tag = None
 word_freqs = defaultdict(lambda: 0)
 
@@ -91,7 +92,7 @@ def validate_tag(tag, phrase_b, phrase_e):
         raise TagError('len')
 
 def prepare_sequence(seq, to_ix, device='cpu'):
-    seq = [to_ix[x] for x in seq]
+    seq = [to_ix.get(x, 0) for x in seq]
     seq = torch.tensor(seq, dtype=torch.long, device=device)
     return seq
 
@@ -107,7 +108,7 @@ def process_feats(feats):
     return "|".join(k + "=" + v for k, v in feats.items())
 
 class ConlluLoader:
-    def __init__(self, data, index=None, suffixes=None, device=None, print_broken_tags=[], update_freqs=True):
+    def __init__(self, data, index=None, suffixes=None, device=None, print_broken_tags=[], update_freqs=True, ignore_tags=False):
         global word_to_ix, tag_to_ix
         
         if device is not None:
@@ -116,7 +117,7 @@ class ConlluLoader:
             device = self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         self.broken_tags = 0
-        self.ignore_tags = False
+        self.ignore_tags = ignore_tags
         # load the TSV file
         with open(index) as file:
             lines = []
@@ -143,20 +144,21 @@ class ConlluLoader:
                 phrase_e = parse_metadata(sample.metadata['phrase_e'])
                 for p_id, ps, pe in zip(phrase_id, phrase_s, phrase_e):
                     try:
+                        doc_id = self.phrase_data.loc[p_id]['document_id']
                         if not self.ignore_tags:
                             tag = self.phrase_data.loc[p_id]['tag']
                             tag = process_tag(tag)
                             validate_tag(tag, ps, pe)
-                        doc_id = self.phrase_data.loc[p_id]['document_id']
                     except KeyError:
                         pass
                     except TagError as e:
                         self.broken_tags += 1
                         if e.reason in print_broken_tags:
-                            print("Tag error in {:d}:{:d}".format(doc_id, p_id), file=sys.stderr)
+                            print("Tag error in {}:{}".format(doc_id, p_id), file=sys.stderr)
                             print(sample, file=sys.stderr)
                             print(self.phrase_data.loc[p_id]['phrase'], file=sys.stderr)
                             print(tag, file=sys.stderr)
+                            # raise KeyboardInterrupt()
                     else:
                         if self.ignore_tags:
                             tag = None
@@ -172,7 +174,7 @@ class ConlluLoader:
             with open(suffixes) as file:
                 self.suffixes = marisa_trie.Trie(line.strip()[::-1] for line in file)
 
-    def prepare_data(self, extra_data=['deprel', 'upostag'], include_feats=True, include_head=True, **kw_args):
+    def prepare_data(self, extra_data=['deprel', 'upostag'], include_feats=True, include_head=True, keep_text_data=True, update_dicts=True, **kw_args):
         self.data = []
         for sample, _, tag, bounds in self.text_data:
             text = text_property(sample, 'form')
@@ -187,16 +189,19 @@ class ConlluLoader:
                 heads = [str(bounds[0] <= int(h) - 1 < bounds[1]) for h in heads]
                 extras.append(heads)
             extras = ["|".join(p) for p in zip(*extras)]
-            for w in text:
-                if w not in word_to_ix:
-                    word_to_ix[w] = len(word_to_ix)
-            for r in extras:
-                if r not in extra_to_ix:
-                    extra_to_ix[r] = len(extra_to_ix)
+            if update_dicts:
+                for w in text:
+                    if w not in word_to_ix:
+                        word_to_ix[w] = len(word_to_ix)
+                for r in extras:
+                    if r not in extra_to_ix:
+                        extra_to_ix[r] = len(extra_to_ix)
             p_text = prepare_sequence(text, word_to_ix, self.device)
             p_tag = prepare_sequence(tag, tag_to_ix, self.device) if not self.ignore_tags else None
             p_extras = prepare_sequence(extras, extra_to_ix, self.device)
             self.data.append((p_text, p_tag, p_extras, bounds))
+        if not keep_text_data:
+            del self.text_data
 
     def shuffle(self):
         shuffle(self.data)
