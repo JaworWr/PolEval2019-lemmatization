@@ -75,8 +75,8 @@ def main(args):
     tok = Tokenizer(args['tokenizer_model'])
 
     cl.load_dicts(model['dicts'])
-    data_loader = cl.ConlluLoader(args['data'], args['index'], model.get('suffixes', None), device=device, update_freqs=False)
-    data_loader.prepare_data(**model['preparation_params'])
+    data_loader = cl.ConlluLoader(args['data'], args['index'], model.get('suffixes', None), device=device, update_freqs=False, ignore_tags=True)
+    data_loader.prepare_data(**model['preparation_params'], update_dicts=False)
 
     wiki_phrases = dict()
     with open('data/wiki_lemmatization.txt') as file:
