@@ -77,4 +77,9 @@ def generate_forms(word, form):
         res.update(forms_for_base(b, form))    
     return res
 
-
+def get_all_tags(word):
+    tags = set()
+    for a,b,des in M.analyse(word):
+        orth,base,tag, p1, p2 = des
+        tags.add(tuple(tag.split(':')))
+    return tags

@@ -5,6 +5,57 @@ from word_transformation import application
 import argparse
 import sys
 import torch
+from morf_tools import get_all_tags
+
+def split_genders(xs):
+    res = set()
+    for n, g in xs:
+        gs = g.split('.')
+        for gg in gs:
+            res.add((n, gg))
+    return res
+
+def rule_tags(words):
+    gt = [get_all_tags(w) for w in words]
+    tags = [None] * len(gt)
+    subst_ind = -1
+    for i, t in enumerate(gt):
+        if all(a[0] == 'subst' for a in t):
+            if subst_ind >= 0:
+                return tags
+            common = set((a[1], a[-1]) for a in t)
+            common = split_genders(common)
+            subst_ind = i
+        elif not all(a[0] == 'adj' for a in t):
+            return tags
+    if subst_ind >= 0:
+        for t in gt:
+            if all(a[0] == 'adj' for a in t):
+                s = set((a[1], a[3]) for a in t)
+                s = split_genders(s)
+                common &= s
+        common = list(common)
+        if len(common) > 0:
+            for i in range(len(words)):
+                if i == subst_ind:
+                    tags[i] = 'subst:{}:{}'.format(*common[0])
+                else:
+                    tags[i] = 'adj:nom:{}:{}'.format(*common[0])
+    return tags
+
+def fixing(tags):
+    gt = [t.split(':') for t in tags]
+    c = 0
+    for t in gt:
+        if t[0] == 'subst':
+            c += 1
+            g = t[-1]
+    if c == 1:
+        for t in gt:
+            if t[0] == 'adj':
+                t[-1] = g
+        tags = [':'.join(t) for t in gt]
+    return tags
 
 def apply_tags(oc, words, ops):
     r = [application(w, op) for w, op in zip(words, ops)]
@@ -18,7 +69,7 @@ def apply_tags(oc, words, ops):
             word = word.lower()
         r1.append(word)
     for i, w in enumerate(r1):
-        if w == '<guessed-form>':
+        if w in ['?', '<guessed-form>']:
             r1[i] = words[i]
     return r1
 
@@ -33,8 +84,14 @@ def run_tests(loader, model, tok, wiki_phrases=dict()):
                 result = wiki_phrases[phrase]
                 tag = None
             else:
-                tag = model(data, extras, bounds)
-                tag = [cl.ix_to_tag[i] for i in tag.flatten()]
+                forms = cl.text_property(text, 'form')[bounds[0]:bounds[1]]
+                lemmas = cl.text_property(text, 'lemma')[bounds[0]:bounds[1]]
+                pos = cl.text_property(text, 'upostag')[bounds[0]:bounds[1]]
+                tag = rule_tags(forms)
+                if tag[0] is None:
+                    tag = model(data, extras, bounds)
+                    tag = [cl.ix_to_tag[i] for i in tag.flatten()]
+                    tag = fixing(tag)
                 lemmas = cl.text_property(text, 'lemma')[bounds[0]:bounds[1]]
                 pos = cl.text_property(text, 'upostag')[bounds[0]:bounds[1]]
 
@@ -90,7 +147,7 @@ def main(args):
     results = run_tests(data_loader, net, tok, wiki_phrases)
 
     with open(args['output'], 'w') as file:
-        for phrase, _, result, _, _, p in results:
+        for phrase, lemma, result, old_tag, tag, p in results:
             line = '\t'.join([str(p.name), p['document_id'], phrase, result])
             file.write(line + '\n')
     

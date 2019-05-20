@@ -42,11 +42,23 @@ def application(w, op):
         if len(L) == 2 and L[1] in ['u', 'em', 'owi', 'a']:
             return L[0] + comma
                 
-        forms = list(generate_forms(w, op) - {w})
+        # forms = list(generate_forms(w, op) - {w})
+        forms = list(generate_forms(w, op))
         if forms:
             return random.choice(forms) + comma #TODO: choose more frequent
         else:
-            return '<guessed-form>'        
+            # return '<guessed-form>'   
+            L1 = op.split(':')
+            candidates = [':'.join(L1[:-1])]
+            if L1[-1] in ('m1', 'm2', 'm3'): # wrong masculine
+                for g in {'m1', 'm2', 'm3'} - {L1[-1]}:
+                    candidates.append(candidates[0] + ':' + g)
+            for op1 in reversed(candidates):
+                forms = list(generate_forms(w, op1))
+                # forms = list(generate_forms(w, op1) - {w})
+                if forms:
+                    return random.choice(forms) + comma #TODO: choose more frequent
+            return '<guessed-form>'
     
     if 'form-' in op:
         last = op.split('-')[-1]
@@ -69,7 +81,7 @@ if __name__== "__main__":
 
     tests = []
         
-    for x in open('../index_new_v4.tsv'):
+    for x in open('index_pl_v2.tsv'):
         n1,n2, phrase, lemma, ops = x.split('\t')
         lemma = lemma.split()
         phrase = phrase.split()
