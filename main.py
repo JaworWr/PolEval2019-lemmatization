@@ -100,7 +100,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', help='path to model', type=str, required=True)
     parser.add_argument('--tokenizer_model', help='path to tokenizer model', type=str, required=True)
-    parser.add_argument('--data', help='path to data in CoNLL-U format', type=str, required=True)
+    parser.add_argument('--data', help='path to data in the CoNLL-U format', type=str, required=True)
     parser.add_argument('--index', help='path to data index', type=str, required=True)
     parser.add_argument('--output', help='output path', type=str, required=True)
     args = vars(parser.parse_args())

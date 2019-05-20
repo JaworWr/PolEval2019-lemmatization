@@ -123,7 +123,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--tokenizer_model', help='path to tokenizer model', type=str, required=True)
-    parser.add_argument('--data', help='path to data in CoNLL-U format', type=str, required=True)
+    parser.add_argument('--data', help='path to data in the XML format', type=str, required=True)
     parser.add_argument('--index', help='path to data index', type=str, required=True)
     parser.add_argument('--output', help='output path', type=str, required=True)
     parser.add_argument('--parse', help='use UDPipe parser', action='store_true')
